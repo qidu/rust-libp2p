@@ -1,8 +1,104 @@
-# 0.38.0 [unreleased]
+# 0.40.0
 
-- Update dial address concurrency factor to `8`, thus dialing up to 8 addresses concurrently for a single connection attempt. See `Swarm::dial_concurrency_factor` and [PR 2741].
+- Bump rand to 0.8 and quickcheck to 1. See [PR 2857].
 
-- Update to `libp2p-core` `v0.35.0`.
+- Update to `libp2p-core` `v0.37.0`.
+
+- Introduce `libp2p_swarm::keep_alive::ConnectionHandler` in favor of removing `keep_alive` from
+  `libp2p_swarm::dummy::ConnectionHandler`. `dummy::ConnectionHandler` now literally does not do anything. In the same
+  spirit, introduce `libp2p_swarm::keep_alive::Behaviour` and `libp2p_swarm::dummy::Behaviour`. See [PR 2859].
+
+[PR 2857]: https://github.com/libp2p/rust-libp2p/pull/2857
+[PR 2859]: https://github.com/libp2p/rust-libp2p/pull/2859/
+
+- Pass actual `PeerId` of dial to `NetworkBehaviour::inject_dial_failure` on `DialError::ConnectionLimit`. See [PR 2928].
+
+[PR 2928]: https://github.com/libp2p/rust-libp2p/pull/2928
+
+
+# 0.39.0
+
+- Remove deprecated `NetworkBehaviourEventProcess`. See [libp2p-swarm v0.38.0 changelog entry] for
+  migration path.
+
+- Update to `libp2p-core` `v0.36.0`.
+
+- Enforce backpressure on incoming streams via `StreamMuxer` interface. In case we hit the configured limit of maximum
+  number of inbound streams, we will stop polling the `StreamMuxer` for new inbound streams. Depending on the muxer
+  implementation in use, this may lead to instant dropping of inbound streams. See [PR 2861].
+
+[libp2p-swarm v0.38.0 changelog entry]: https://github.com/libp2p/rust-libp2p/blob/master/swarm/CHANGELOG.md#0380
+[PR 2861]: https://github.com/libp2p/rust-libp2p/pull/2861/
+
+# 0.38.0
+
+- Deprecate `NetworkBehaviourEventProcess`. When deriving `NetworkBehaviour` on a custom `struct` users
+  should either bring their own `OutEvent` via `#[behaviour(out_event = "MyBehaviourEvent")]` or,
+  when not specified, have the derive macro generate one for the user.
+
+  See [`NetworkBehaviour`
+  documentation](https://docs.rs/libp2p/latest/libp2p/swarm/trait.NetworkBehaviour.html) and [PR
+  2784] for details.
+
+  Previously
+
+  ``` rust
+  #[derive(NetworkBehaviour)]
+  #[behaviour(event_process = true)]
+  struct MyBehaviour {
+      gossipsub: Gossipsub,
+      mdns: Mdns,
+  }
+
+  impl NetworkBehaviourEventProcess<Gossipsub> for MyBehaviour {
+      fn inject_event(&mut self, message: GossipsubEvent) {
+        todo!("Handle event")
+      }
+  }
+
+  impl NetworkBehaviourEventProcess<MdnsEvent> for MyBehaviour {
+      fn inject_event(&mut self, message: MdnsEvent) {
+        todo!("Handle event")
+      }
+  }
+  ```
+
+  Now
+
+  ``` rust
+  #[derive(NetworkBehaviour)]
+  #[behaviour(out_event = "MyBehaviourEvent")]
+  struct MyBehaviour {
+      gossipsub: Gossipsub,
+      mdns: Mdns,
+  }
+
+  enum MyBehaviourEvent {
+      Gossipsub(GossipsubEvent),
+      Mdns(MdnsEvent),
+  }
+
+  impl From<GossipsubEvent> for MyBehaviourEvent {
+      fn from(event: GossipsubEvent) -> Self {
+          MyBehaviourEvent::Gossipsub(event)
+      }
+  }
+
+  impl From<MdnsEvent> for MyBehaviourEvent {
+      fn from(event: MdnsEvent) -> Self {
+          MyBehaviourEvent::Mdns(event)
+      }
+  }
+
+  match swarm.next().await.unwrap() {
+    SwarmEvent::Behaviour(MyBehaviourEvent::Gossipsub(event)) => {
+      todo!("Handle event")
+    }
+    SwarmEvent::Behaviour(MyBehaviourEvent::Mdns(event)) => {
+      todo!("Handle event")
+    }
+  }
+  ```
 
 - When deriving `NetworkBehaviour` on a custom `struct` where the user does not specify their own
   `OutEvent` via `#[behaviour(out_event = "MyBehaviourEvent")]` and where the user does not enable
@@ -10,10 +106,16 @@
   the user.
 
   See [`NetworkBehaviour`
-  documentation](https://docs.rs/libp2p/latest/libp2p/swarm/trait.NetworkBehaviour.html) for
-  details.
+  documentation](https://docs.rs/libp2p/latest/libp2p/swarm/trait.NetworkBehaviour.html) and [PR
+  2792] for details.
+
+- Update dial address concurrency factor to `8`, thus dialing up to 8 addresses concurrently for a single connection attempt. See `Swarm::dial_concurrency_factor` and [PR 2741].
+
+- Update to `libp2p-core` `v0.35.0`.
 
 [PR 2741]: https://github.com/libp2p/rust-libp2p/pull/2741/
+[PR 2784]: https://github.com/libp2p/rust-libp2p/pull/2784
+[PR 2792]: https://github.com/libp2p/rust-libp2p/pull/2792
 
 # 0.37.0
 

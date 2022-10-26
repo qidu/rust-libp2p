@@ -38,12 +38,12 @@
 //! >           the network as a whole, see the
 //! >           [`NetworkBehaviour`](crate::behaviour::NetworkBehaviour) trait.
 
-mod dummy;
 pub mod either;
 mod map_in;
 mod map_out;
 pub mod multi;
 mod one_shot;
+mod pending;
 mod select;
 
 pub use crate::upgrade::{InboundUpgradeSend, OutboundUpgradeSend, SendWrapper, UpgradeInfoSend};
@@ -52,10 +52,10 @@ use instant::Instant;
 use libp2p_core::{upgrade::UpgradeError, ConnectedPoint, Multiaddr, PeerId};
 use std::{cmp::Ordering, error, fmt, task::Context, task::Poll, time::Duration};
 
-pub use dummy::DummyConnectionHandler;
 pub use map_in::MapInEvent;
 pub use map_out::MapOutEvent;
 pub use one_shot::{OneShotHandler, OneShotHandlerConfig};
+pub use pending::PendingConnectionHandler;
 pub use select::{ConnectionHandlerSelect, IntoConnectionHandlerSelect};
 
 /// A handler for a set of protocols used on a connection with a remote.

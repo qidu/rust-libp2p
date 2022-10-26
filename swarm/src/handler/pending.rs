@@ -1,3 +1,4 @@
+// Copyright 2022 Protocol Labs.
 // Copyright 2018 Parity Technologies (UK) Ltd.
 //
 // Permission is hereby granted, free of charge, to any person obtaining a
@@ -24,53 +25,55 @@ use crate::handler::{
 };
 use crate::NegotiatedSubstream;
 use libp2p_core::{
-    upgrade::{DeniedUpgrade, InboundUpgrade, OutboundUpgrade},
+    upgrade::{InboundUpgrade, OutboundUpgrade, PendingUpgrade},
     Multiaddr,
 };
 use std::task::{Context, Poll};
 use void::Void;
 
-/// Implementation of [`ConnectionHandler`] that doesn't handle anything.
+/// Implementation of [`ConnectionHandler`] that returns a pending upgrade.
 #[derive(Clone, Debug)]
-pub struct DummyConnectionHandler {
-    pub keep_alive: KeepAlive,
+pub struct PendingConnectionHandler {
+    protocol_name: String,
 }
 
-impl Default for DummyConnectionHandler {
-    fn default() -> Self {
-        DummyConnectionHandler {
-            keep_alive: KeepAlive::No,
-        }
+impl PendingConnectionHandler {
+    pub fn new(protocol_name: String) -> Self {
+        PendingConnectionHandler { protocol_name }
     }
 }
 
-impl ConnectionHandler for DummyConnectionHandler {
+impl ConnectionHandler for PendingConnectionHandler {
     type InEvent = Void;
     type OutEvent = Void;
     type Error = Void;
-    type InboundProtocol = DeniedUpgrade;
-    type OutboundProtocol = DeniedUpgrade;
+    type InboundProtocol = PendingUpgrade<String>;
+    type OutboundProtocol = PendingUpgrade<String>;
     type OutboundOpenInfo = Void;
     type InboundOpenInfo = ();
 
     fn listen_protocol(&self) -> SubstreamProtocol<Self::InboundProtocol, Self::InboundOpenInfo> {
-        SubstreamProtocol::new(DeniedUpgrade, ())
+        SubstreamProtocol::new(PendingUpgrade::new(self.protocol_name.clone()), ())
     }
 
     fn inject_fully_negotiated_inbound(
         &mut self,
-        _: <Self::InboundProtocol as InboundUpgrade<NegotiatedSubstream>>::Output,
+        protocol: <Self::InboundProtocol as InboundUpgrade<NegotiatedSubstream>>::Output,
         _: Self::InboundOpenInfo,
     ) {
-        unreachable!("`DeniedUpgrade` is never successful.");
+        void::unreachable(protocol)
     }
 
     fn inject_fully_negotiated_outbound(
         &mut self,
-        _: <Self::OutboundProtocol as OutboundUpgrade<NegotiatedSubstream>>::Output,
-        v: Self::OutboundOpenInfo,
+        protocol: <Self::OutboundProtocol as OutboundUpgrade<NegotiatedSubstream>>::Output,
+        _info: Self::OutboundOpenInfo,
     ) {
-        void::unreachable(v)
+        void::unreachable(protocol);
+        #[allow(unreachable_code)]
+        {
+            void::unreachable(_info);
+        }
     }
 
     fn inject_event(&mut self, v: Self::InEvent) {
@@ -98,7 +101,7 @@ impl ConnectionHandler for DummyConnectionHandler {
     }
 
     fn connection_keep_alive(&self) -> KeepAlive {
-        self.keep_alive
+        KeepAlive::No
     }
 
     fn poll(
