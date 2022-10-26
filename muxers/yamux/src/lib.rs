@@ -21,14 +21,17 @@
 //! Implements the Yamux multiplexing protocol for libp2p, see also the
 //! [specification](https://github.com/hashicorp/yamux/blob/master/spec.md).
 
+#![cfg_attr(docsrs, feature(doc_cfg, doc_auto_cfg))]
+
 use futures::{
     future,
     prelude::*,
+    ready,
     stream::{BoxStream, LocalBoxStream},
 };
-use libp2p_core::muxing::StreamMuxer;
+use libp2p_core::muxing::{StreamMuxer, StreamMuxerEvent};
 use libp2p_core::upgrade::{InboundUpgrade, OutboundUpgrade, UpgradeInfo};
-use libp2p_core::Multiaddr;
+use std::collections::VecDeque;
 use std::{
     fmt, io, iter, mem,
     pin::Pin,
@@ -43,17 +46,25 @@ pub struct Yamux<S> {
     incoming: S,
     /// Handle to control the connection.
     control: yamux::Control,
+    /// Temporarily buffers inbound streams in case our node is performing backpressure on the remote.
+    ///
+    /// The only way how yamux can make progress is by driving the [`Incoming`] stream. However, the
+    /// [`StreamMuxer`] interface is designed to allow a caller to selectively make progress via
+    /// [`StreamMuxer::poll_inbound`] and [`StreamMuxer::poll_outbound`] whilst the more general
+    /// [`StreamMuxer::poll`] is designed to make progress on existing streams etc.
+    ///
+    /// This buffer stores inbound streams that are created whilst [`StreamMuxer::poll`] is called.
+    /// Once the buffer is full, new inbound streams are dropped.
+    inbound_stream_buffer: VecDeque<yamux::Stream>,
 }
+
+const MAX_BUFFERED_INBOUND_STREAMS: usize = 25;
 
 impl<S> fmt::Debug for Yamux<S> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("Yamux")
     }
 }
-
-/// A token to poll for an outbound substream.
-#[derive(Debug)]
-pub struct OpenSubstreamToken(());
 
 impl<C> Yamux<Incoming<C>>
 where
@@ -70,6 +81,7 @@ where
                 _marker: std::marker::PhantomData,
             },
             control: ctrl,
+            inbound_stream_buffer: VecDeque::default(),
         }
     }
 }
@@ -89,6 +101,7 @@ where
                 _marker: std::marker::PhantomData,
             },
             control: ctrl,
+            inbound_stream_buffer: VecDeque::default(),
         }
     }
 }
@@ -106,13 +119,11 @@ where
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Result<Self::Substream, Self::Error>> {
-        self.incoming.poll_next_unpin(cx).map(|maybe_stream| {
-            let stream = maybe_stream
-                .transpose()?
-                .ok_or(YamuxError(ConnectionError::Closed))?;
+        if let Some(stream) = self.inbound_stream_buffer.pop_front() {
+            return Poll::Ready(Ok(stream));
+        }
 
-            Ok(stream)
-        })
+        self.poll_inner(cx)
     }
 
     fn poll_outbound(
@@ -124,11 +135,23 @@ where
             .map_err(YamuxError)
     }
 
-    fn poll_address_change(
+    fn poll(
         self: Pin<&mut Self>,
-        _: &mut Context<'_>,
-    ) -> Poll<Result<Multiaddr, Self::Error>> {
-        Poll::Pending
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<StreamMuxerEvent, Self::Error>> {
+        let this = self.get_mut();
+
+        loop {
+            let inbound_stream = ready!(this.poll_inner(cx))?;
+
+            if this.inbound_stream_buffer.len() >= MAX_BUFFERED_INBOUND_STREAMS {
+                log::warn!("dropping {inbound_stream} because buffer is full");
+                drop(inbound_stream);
+                continue;
+            }
+
+            this.inbound_stream_buffer.push_back(inbound_stream);
+        }
     }
 
     fn poll_close(mut self: Pin<&mut Self>, c: &mut Context<'_>) -> Poll<YamuxResult<()>> {
@@ -147,6 +170,21 @@ where
         }
 
         Poll::Pending
+    }
+}
+
+impl<S> Yamux<S>
+where
+    S: Stream<Item = Result<yamux::Stream, YamuxError>> + Unpin,
+{
+    fn poll_inner(&mut self, cx: &mut Context<'_>) -> Poll<Result<yamux::Stream, YamuxError>> {
+        self.incoming.poll_next_unpin(cx).map(|maybe_stream| {
+            let stream = maybe_stream
+                .transpose()?
+                .ok_or(YamuxError(ConnectionError::Closed))?;
+
+            Ok(stream)
+        })
     }
 }
 

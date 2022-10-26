@@ -35,7 +35,7 @@
 //! terminal window, run:
 //!
 //! ```sh
-//! cargo run --example chat
+//! cargo run --example chat --features=full
 //! ```
 //!
 //! It will print the PeerId and the listening addresses, e.g. `Listening on
@@ -44,12 +44,12 @@
 //! In the second terminal window, start a new instance of the example with:
 //!
 //! ```sh
-//! cargo run --example chat -- /ip4/127.0.0.1/tcp/24915
+//! cargo run --example chat --features=full -- /ip4/127.0.0.1/tcp/24915
 //! ```
 //!
 //! The two nodes then connect.
 
-use async_std::{io, task};
+use async_std::io;
 use futures::{
     prelude::{stream::StreamExt, *},
     select,
@@ -79,21 +79,15 @@ async fn main() -> Result<(), Box<dyn Error>> {
     let floodsub_topic = floodsub::Topic::new("chat");
 
     // We create a custom network behaviour that combines floodsub and mDNS.
-    // In the future, we want to improve libp2p to make this easier to do.
-    // Use the derive to generate delegating NetworkBehaviour impl and require the
-    // NetworkBehaviourEventProcess implementations below.
+    // Use the derive to generate delegating NetworkBehaviour impl.
     #[derive(NetworkBehaviour)]
     #[behaviour(out_event = "OutEvent")]
     struct MyBehaviour {
         floodsub: Floodsub,
         mdns: Mdns,
-
-        // Struct fields which do not implement NetworkBehaviour need to be ignored
-        #[behaviour(ignore)]
-        #[allow(dead_code)]
-        ignored_member: bool,
     }
 
+    #[allow(clippy::large_enum_variant)]
     #[derive(Debug)]
     enum OutEvent {
         Floodsub(FloodsubEvent),
@@ -114,11 +108,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     // Create a Swarm to manage peers and events
     let mut swarm = {
-        let mdns = task::block_on(Mdns::new(MdnsConfig::default()))?;
+        let mdns = Mdns::new(MdnsConfig::default())?;
         let mut behaviour = MyBehaviour {
             floodsub: Floodsub::new(local_peer_id),
             mdns,
-            ignored_member: false,
         };
 
         behaviour.floodsub.subscribe(floodsub_topic.clone());
